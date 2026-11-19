@@ -9,7 +9,12 @@ from pathlib import Path
 def report_error(exc_type, exc_value, exc_traceback):
     details = ''.join(traceback.format_exception(exc_type, exc_value, exc_traceback))
     saved_path = None
-    for base in (os.environ.get('LOCALAPPDATA'), tempfile.gettempdir()):
+    try:
+        home = str(Path.home())
+    except (RuntimeError, KeyError):
+        home = None
+    for base in (os.environ.get('LOCALAPPDATA'), os.environ.get('APPDATA'),
+                 tempfile.gettempdir(), home):
         if not base:
             continue
         try:

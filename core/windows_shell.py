@@ -3,7 +3,13 @@
 import ctypes
 import os
 import sys
-import tkinter as tk
+
+try:  # tkinter solo lo usa la interfaz antigua; la actual (WebView2) no lo necesita.
+    import tkinter as tk
+    _TclError = tk.TclError
+except ImportError:  # Python recortado o sin Tcl/Tk
+    tk = None
+    _TclError = RuntimeError
 
 from core.config import APP_USER_MODEL_ID
 
@@ -26,6 +32,51 @@ class RECT(ctypes.Structure):
         ("right", ctypes.c_long),
         ("bottom", ctypes.c_long),
     ]
+
+
+ERROR_ALREADY_EXISTS = 183
+SW_RESTORE = 9
+_instance_mutex = None
+
+
+def acquire_single_instance(name="Local\\Psicoseado.SSTool.SingleInstance"):
+    """False si ya hay otra instancia abierta (se trae su ventana al frente).
+
+    Dos instancias comparten el perfil de WebView2 y pueden bloquearlo o corromperlo.
+    Si el mutex no se puede crear se permite continuar: nunca bloquea el arranque.
+    """
+    global _instance_mutex
+    if not sys.platform.startswith("win"):
+        return True
+    try:
+        kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+        kernel32.CreateMutexW.restype = ctypes.c_void_p
+        kernel32.CreateMutexW.argtypes = [ctypes.c_void_p, ctypes.c_int, ctypes.c_wchar_p]
+        handle = kernel32.CreateMutexW(None, False, name)
+        if not handle:
+            return True
+        if ctypes.get_last_error() == ERROR_ALREADY_EXISTS:
+            _focus_existing_window()
+            return False
+        _instance_mutex = handle  # se libera al cerrar el proceso
+    except (AttributeError, OSError):
+        return True
+    return True
+
+
+def _focus_existing_window(title="SSTool+"):
+    try:
+        user32 = ctypes.windll.user32
+        user32.FindWindowW.restype = ctypes.c_void_p
+        user32.FindWindowW.argtypes = [ctypes.c_wchar_p, ctypes.c_wchar_p]
+        user32.ShowWindow.argtypes = [ctypes.c_void_p, ctypes.c_int]
+        user32.SetForegroundWindow.argtypes = [ctypes.c_void_p]
+        hwnd = user32.FindWindowW(None, title)
+        if hwnd:
+            user32.ShowWindow(hwnd, SW_RESTORE)
+            user32.SetForegroundWindow(hwnd)
+    except (AttributeError, OSError):
+        pass
 
 
 def configure_process_identity():
@@ -91,6 +142,24 @@ def minimize_taskbar_window(window):
     """Minimiza el HWND real mediante Windows, sin crear el icono antiguo de Tk."""
     if not sys.platform.startswith("win"):
         return False
+    try:
+        window.update_idletasks()
+        force_taskbar_window(window)
+
+        user32 = ctypes.windll.user32
+        get_parent = user32.GetParent
+        get_parent.argtypes = [ctypes.c_void_p]
+        get_parent.restype = ctypes.c_void_p
+        show_window = user32.ShowWindow
+        show_window.argtypes = [ctypes.c_void_p, ctypes.c_int]
+        show_window.restype = ctypes.c_bool
+
+        native_id = window.winfo_id()
+        handle = get_parent(native_id) or native_id
+        show_window(handle, SW_MINIMIZE)
+        return True
+    except (AttributeError, OSError, _TclError):
+        return False
 
 
 def get_work_area(window):
@@ -115,24 +184,6 @@ def get_work_area(window):
         window.winfo_vrootwidth(),
         window.winfo_vrootheight(),
     )
-    try:
-        window.update_idletasks()
-        force_taskbar_window(window)
-
-        user32 = ctypes.windll.user32
-        get_parent = user32.GetParent
-        get_parent.argtypes = [ctypes.c_void_p]
-        get_parent.restype = ctypes.c_void_p
-        show_window = user32.ShowWindow
-        show_window.argtypes = [ctypes.c_void_p, ctypes.c_int]
-        show_window.restype = ctypes.c_bool
-
-        native_id = window.winfo_id()
-        handle = get_parent(native_id) or native_id
-        show_window(handle, SW_MINIMIZE)
-        return True
-    except (AttributeError, OSError, tk.TclError):
-        return False
 
 
 def asset_path(filename):

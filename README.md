@@ -17,6 +17,8 @@ Launcher gráfico de herramientas para screenshare y análisis forense en Window
 - Categorías: Orbdiff/Others, MeowTonynoh, Spokwn, Scripts, Others Tools y Dependencies.
 - Tarjetas completas clicables, animaciones de transición y cooldown visible de cinco segundos.
 - Ventana redimensionable, minimizado normal a la barra de tareas e intro animada.
+- Fondo animado de estrellas rojas con nebulosas, parpadeo, estrellas fugaces y paralaje suave.
+- Ajustes → «Sin animaciones (versión optimizada)»: desactiva todas las animaciones, el intro, la estela del ratón y el fondo animado para reducir CPU/GPU. Se guarda entre sesiones.
 - Discord: `https://discord.gg/Eux3UUKvXg`.
 
 ## Herramientas nuevas de esta versión
@@ -39,6 +41,11 @@ Los ejecutables se descargan en `tools/<categoria>/`, se validan como archivos P
 4. Ejecuta `python -m pip install -r requirements.txt`.
 5. Ejecuta `python main.py`.
 
+## Crear el ejecutable
+
+1. Instala Python 3.12 x64 desde python.org, incluyendo Tcl/Tk y Python Launcher. Puedes conservar Python 3.13 o 3.14 instalado.
+2. Ejecuta `BUILD_EXE.bat`.
+3. El resultado será `dist\PsicoseadoSSTool.exe`.
 
 El instalador de dependencias no utiliza la caché global de `pip`, evitando
 errores de permisos causados por ruedas bloqueadas o creadas por otro usuario.
@@ -53,7 +60,7 @@ elimina docstrings y asserts y solicita permisos de administrador mediante UAC.
 Esto dificulta la extracción casual del catálogo y de la lógica, aunque ningún
 secreto guardado dentro de un ejecutable puede protegerse de forma absoluta.
 El icono del ejecutable, la ventana y la barra de tareas se toma de
-`assets/PsicoseadoSSTool.ico`.
+`assets/SSToolPlus.ico` (la imagen de la lupa roja).
 
 La cabecera permanece completamente oculta durante la introducción y aparece
 directamente al terminar. Las descargas con tamaño conocido enseñan una barra

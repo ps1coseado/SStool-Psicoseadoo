@@ -2,9 +2,11 @@
 
 import hashlib
 import hmac
+import http.client
 import json
 import os
 import re
+import shutil
 import stat
 import subprocess
 import sys
@@ -17,7 +19,10 @@ import webbrowser
 import zipfile
 from html.parser import HTMLParser
 
+from core import net
 from core.config import TOOLS_ROOT
+from core.diagnostics import get_logger
+from core.paths import data_dir, windows_directory, writable_directory
 
 
 DOWNLOAD_TIMEOUT = 30
@@ -28,6 +33,7 @@ MAX_SCRIPT_BYTES = 8 * 1024 * 1024
 MAX_SOURCE_PAGE_BYTES = 2 * 1024 * 1024
 INSTALL_MARKER_SUFFIX = ".psicoseado-sstool.json"
 INSTALL_MARKER_SCHEMA = 1
+BUNDLED_TOOLS_DIR = "bundled_tools"
 ZIMMERMAN_PRIMARY = "https://download.ericzimmermanstools.com/"
 ZIMMERMAN_MIRROR = "https://f001.backblazeb2.com/file/EricZimmermanTools/"
 ZIMMERMAN_INDEX_PAGES = (
@@ -40,6 +46,10 @@ ZIMMERMAN_HOSTS = ("download.ericzimmermanstools.com", "f001.backblazeb2.com")
 
 class ToolDownloadError(RuntimeError):
     """Error controlado durante la descarga o validacion de una herramienta."""
+
+
+# URLError y ssl.SSLError ya son OSError; HTTPException (IncompleteRead...) no lo es.
+_RECOVERABLE = (OSError, ToolDownloadError, urllib.error.URLError, http.client.HTTPException, ValueError)
 
 
 class _MediaFireDownloadParser(HTMLParser):
@@ -72,8 +82,30 @@ def downloads_directory():
     return os.path.join(os.path.expanduser("~"), "Downloads")
 
 
+_ROOT_CACHE = {}
+
+
 def tools_root_directory():
-    return os.path.join(downloads_directory(), TOOLS_ROOT)
+    """Carpeta de herramientas: Descargas/tools o, si no es escribible, los datos de la app.
+
+    Algunos Windows personalizados redirigen o bloquean Descargas; asi la app sigue
+    funcionando en vez de fallar en cada descarga.
+    """
+    primary = os.path.join(downloads_directory(), TOOLS_ROOT)
+    cached = _ROOT_CACHE.get(primary)
+    if cached and os.path.isdir(cached):
+        return cached
+    if writable_directory(primary):
+        chosen = primary
+    else:
+        try:
+            chosen = os.path.join(str(data_dir()), TOOLS_ROOT)
+            os.makedirs(chosen, exist_ok=True)
+        except OSError:
+            chosen = primary
+        get_logger().warning("Descargas no escribible; se usa %s", chosen)
+    _ROOT_CACHE[primary] = chosen
+    return chosen
 
 
 def ensure_tools_root():
@@ -88,6 +120,19 @@ def resolve_tool_path(category_id, tool):
     if not path:
         return None
     return os.path.join(tools_root_directory(), category_id, path)
+
+
+def bundled_tool_path(name):
+    """Ruta de un archivo incluido con SSTool+ (codigo fuente o PyInstaller)."""
+    root = getattr(sys, "_MEIPASS", None) or os.path.dirname(
+        os.path.dirname(os.path.abspath(__file__))
+    )
+    return os.path.join(root, BUNDLED_TOOLS_DIR, name)
+
+
+def _uses_bundled(tool):
+    """True si la herramienta se instala desde bundled_tools/ (sin enlace de descarga)."""
+    return bool(tool.get("bundled")) and not (tool.get("url") or tool.get("mediafire_page"))
 
 
 def _sha256(path):
@@ -118,6 +163,8 @@ def _install_source(tool):
     embedded_hash = _embedded_sha256(tool)
     if embedded_hash:
         return f"embedded:{embedded_hash}"
+    if _uses_bundled(tool):
+        return f"bundled:{tool['bundled']}:{tool.get('sha256', '')}"
     return tool.get("mediafire_page") or tool.get("url") or ""
 
 
@@ -222,7 +269,26 @@ def _mark_as_downloaded(path):
         pass
 
 
+class _IncompleteDownload(ToolDownloadError):
+    """Descarga cortada: se reintenta una vez antes de rendirse."""
+
+
 def _download_to_temp(url, target_dir, expected_sha256=None, on_progress=None):
+    def attempt():
+        return _download_once(url, target_dir, expected_sha256, on_progress)
+
+    try:
+        return attempt()
+    except _IncompleteDownload:
+        pass
+    except Exception as exc:  # noqa: BLE001
+        if not net.is_transient(exc):
+            raise
+    time.sleep(net.RETRY_DELAY)
+    return attempt()
+
+
+def _download_once(url, target_dir, expected_sha256=None, on_progress=None):
     os.makedirs(target_dir, exist_ok=True)
     file_descriptor, temp_path = tempfile.mkstemp(prefix=".sstool-download-", dir=target_dir)
     os.close(file_descriptor)
@@ -244,9 +310,12 @@ def _download_to_temp(url, target_dir, expected_sha256=None, on_progress=None):
                 "Referer": "https://ericzimmerman.github.io/",
             }
         request = urllib.request.Request(url, headers=headers)
-        with urllib.request.urlopen(request, timeout=DOWNLOAD_TIMEOUT) as response:
+        with net.open_url(request, DOWNLOAD_TIMEOUT) as response:
             content_length = response.headers.get("Content-Length")
-            total_bytes = int(content_length) if content_length else None
+            try:
+                total_bytes = int(content_length) if content_length else None
+            except ValueError:
+                total_bytes = None
             if total_bytes and total_bytes > MAX_DOWNLOAD_BYTES:
                 raise ToolDownloadError("la descarga supera el limite de 512 MB")
 
@@ -271,7 +340,7 @@ def _download_to_temp(url, target_dir, expected_sha256=None, on_progress=None):
         if downloaded == 0:
             raise ToolDownloadError("el servidor devolvio un archivo vacio")
         if total_bytes is not None and downloaded != total_bytes:
-            raise ToolDownloadError("descarga incompleta; vuelve a pulsar el boton para reintentar")
+            raise _IncompleteDownload("descarga incompleta; vuelve a pulsar el boton para reintentar")
 
         if on_progress:
             on_progress(downloaded, downloaded)
@@ -294,7 +363,7 @@ def _download_to_temp(url, target_dir, expected_sha256=None, on_progress=None):
 
 def _read_small_page(url, agent=USER_AGENT):
     request = urllib.request.Request(url, headers={"User-Agent": agent})
-    with urllib.request.urlopen(request, timeout=DOWNLOAD_TIMEOUT) as response:
+    with net.open_url(request, DOWNLOAD_TIMEOUT) as response:
         raw_page = response.read(MAX_SOURCE_PAGE_BYTES + 1)
         if len(raw_page) > MAX_SOURCE_PAGE_BYTES:
             raise ToolDownloadError("la pagina de descarga supera el limite permitido")
@@ -324,7 +393,7 @@ def _resolve_download_url(tool):
     if page_url:
         try:
             return _resolve_mediafire_url(page_url)
-        except (OSError, ToolDownloadError, urllib.error.URLError):
+        except _RECOVERABLE:
             if fallback_url:
                 return fallback_url
             raise
@@ -462,6 +531,37 @@ def _download_zimmerman_zip(tool, target_dir, on_progress=None):
         raise ToolDownloadError(str(exc)) from exc
 
 
+def _install_bundled(tool, full_path):
+    """Copia a tools/<categoria>/ el archivo incluido con SSTool+ tras verificar su SHA-256."""
+    source = bundled_tool_path(tool["bundled"])
+    if not os.path.isfile(source):
+        raise ToolDownloadError(
+            "el archivo incluido con SSTool+ no se encontro; vuelve a descargar o reinstalar SSTool+"
+        )
+    expected = tool.get("sha256")
+    if expected and not hmac.compare_digest(_sha256(source).lower(), expected.lower()):
+        raise ToolDownloadError(
+            "la verificacion SHA-256 fallo; el archivo no se abrira por seguridad"
+        )
+    target_dir = os.path.dirname(full_path)
+    os.makedirs(target_dir, exist_ok=True)
+    file_descriptor, temp_path = tempfile.mkstemp(prefix=".sstool-bundled-", dir=target_dir)
+    try:
+        with os.fdopen(file_descriptor, "wb") as target_file, open(source, "rb") as source_file:
+            shutil.copyfileobj(source_file, target_file, 1024 * 1024)
+        _validate_payload(temp_path, tool)
+        os.replace(temp_path, full_path)
+        temp_path = None
+        _write_install_marker(full_path, tool)
+        return full_path
+    finally:
+        if temp_path:
+            try:
+                os.remove(temp_path)
+            except OSError:
+                pass
+
+
 def _download_tool(category_id, tool, full_path, on_progress=None):
     if not full_path:
         raise ToolDownloadError("esta herramienta no tiene una ruta de instalacion configurada")
@@ -494,6 +594,9 @@ def _download_tool(category_id, tool, full_path, on_progress=None):
                     os.remove(temp_path)
                 except OSError:
                     pass
+
+    if _uses_bundled(tool):
+        return _install_bundled(tool, full_path)
 
     url = _resolve_download_url(tool)
     if not url:
@@ -574,18 +677,25 @@ def _previous_install(full_path, tool):
     return None
 
 
+def _which(name):
+    try:
+        return shutil.which(name)
+    except Exception:  # noqa: BLE001 - PATH corrupto o entorno atipico
+        return None
+
+
 def _powershell_executable():
-    system_root = os.environ.get("SystemRoot", r"C:\Windows")
     candidate = os.path.join(
-        system_root, "System32", "WindowsPowerShell", "v1.0", "powershell.exe"
+        windows_directory(), "System32", "WindowsPowerShell", "v1.0", "powershell.exe"
     )
-    return candidate if os.path.isfile(candidate) else "powershell.exe"
+    if os.path.isfile(candidate):
+        return candidate
+    return _which("powershell") or _which("pwsh") or "powershell.exe"
 
 
 def _cmd_executable():
-    system_root = os.environ.get("SystemRoot", r"C:\Windows")
-    candidate = os.path.join(system_root, "System32", "cmd.exe")
-    return candidate if os.path.isfile(candidate) else "cmd.exe"
+    candidate = os.path.join(windows_directory(), "System32", "cmd.exe")
+    return candidate if os.path.isfile(candidate) else (_which("cmd") or "cmd.exe")
 
 
 def _tool_command(full_path, tool):
@@ -631,6 +741,16 @@ def _run_tool(full_path, tool=None):
                 [],
                 working_directory,
                 raw_arguments=f"/d /k {tool['cmd_command']}",
+            )
+        elif tool.get("runner") == "powershell" and isinstance(command, list) and len(command) == 4:
+            # command = [cmd, /d, /k, "powershell ... -File <ruta>"]. Se entrega a cmd.exe como
+            # texto literal: pasar la ultima parte como argumento la volveria a escapar con \"
+            # y cmd.exe no entiende ese escape (fallaria con rutas con espacios).
+            _run_command_elevated(
+                command[0],
+                [],
+                working_directory,
+                raw_arguments=f'{command[1]} {command[2]} "{command[3]}"',
             )
         else:
             _run_command_elevated(command[0], command[1:], working_directory)
@@ -716,7 +836,7 @@ def launch_tool(
         direct_command
         or native_command
         or browser_url
-        or (full_path and (tool.get("url") or tool.get("embedded_script") is not None))
+        or (full_path and (tool.get("url") or tool.get("embedded_script") is not None or _uses_bundled(tool)))
     )
 
     try:
@@ -734,7 +854,7 @@ def launch_tool(
                 if elevated:
                     on_status(f"{name} solicito permisos de administrador mediante UAC.")
                 else:
-                    on_status(f"{name} se abrio en CMD como administrador.")
+                    on_status(f"{name} se abrio correctamente.")
             return True
 
         if _is_valid_install(full_path, tool):
@@ -753,7 +873,7 @@ def launch_tool(
                 full_path = _download_tool(
                     category_id, tool, full_path, on_progress=on_progress
                 )
-            except (OSError, ToolDownloadError, urllib.error.URLError):
+            except _RECOVERABLE:
                 previous = _previous_install(full_path, tool)
                 if not previous:
                     raise
@@ -781,9 +901,11 @@ def launch_tool(
                 f"Ruta esperada:\n{expected}"
             )
         return False
-    except (OSError, ToolDownloadError, urllib.error.URLError) as exc:
+    except Exception as exc:  # noqa: BLE001 - nada debe tumbar el hilo de la herramienta
+        get_logger().error("Fallo al iniciar %s", name, exc_info=True)
+        detail = str(exc) if isinstance(exc, ToolDownloadError) else net.describe_error(exc)
         if on_error:
-            on_error(f"No se pudo descargar o iniciar {name}:\n{exc}")
+            on_error(f"No se pudo descargar o iniciar {name}:\n{detail}")
         return False
 
 

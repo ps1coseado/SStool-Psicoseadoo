@@ -17,4 +17,4 @@ WINDOW_MIN_HEIGHT = 540
 
 # Carpeta donde se buscan los ejecutables/scripts de cada herramienta.
 # Estructura sugerida: tools/<categoria>/<NombreHerramienta>.exe
-TOOLS_ROOT = "tools"
+TOOLS_ROOT = "Tools"

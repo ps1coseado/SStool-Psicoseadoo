@@ -225,6 +225,38 @@ class GuiTests(unittest.TestCase):
         app.iconify.assert_not_called()
         app.overrideredirect.assert_not_called()
 
+    def test_minimize_taskbar_window_minimizes_native_handle(self):
+        from core import windows_shell
+
+        user32 = SimpleNamespace(
+            GetParent=Mock(return_value=4242),
+            ShowWindow=Mock(return_value=True),
+        )
+        window = Mock()
+        window.winfo_id.return_value = 99
+        with patch.object(windows_shell, "force_taskbar_window") as force, \
+                patch.object(
+                    windows_shell.ctypes, "windll", SimpleNamespace(user32=user32)
+                ):
+            self.assertTrue(windows_shell.minimize_taskbar_window(window))
+        window.update_idletasks.assert_called_once_with()
+        force.assert_called_once_with(window)
+        user32.ShowWindow.assert_called_once_with(4242, windows_shell.SW_MINIMIZE)
+
+    def test_direct_command_does_not_claim_admin_when_not_elevated(self):
+        statuses = []
+        with patch("core.launcher._run_tool", return_value=False):
+            started = launch_tool(
+                "scripts",
+                {
+                    "name": "Demo",
+                    "cmd_command": 'powershell -Command "Write-Host ok"',
+                },
+                on_status=statuses.append,
+            )
+        self.assertTrue(started)
+        self.assertEqual(statuses, ["Demo se abrio correctamente."])
+
     def test_maximize_uses_work_area_and_disables_resize_handles(self):
         app = Mock(_w=".app")
         app.geometry.return_value = "1000x700+16+24"
@@ -260,7 +292,7 @@ class GuiTests(unittest.TestCase):
         self.assertFalse(titlebar._maximized)
 
     def test_inventory(self):
-        self.assertEqual(sum(len(c["tools"]) for c in CATEGORIES), 123)
+        self.assertEqual(sum(len(c["tools"]) for c in CATEGORIES), 117)
         by_category = {c["id"]: {t["name"]: t for t in c["tools"]} for c in CATEGORIES}
         for category, name in (("orbdiff", "Web Hollowing"),
                                ("nirsoft", "MarsPixelDumpAnalyzer"),

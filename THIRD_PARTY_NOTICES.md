@@ -8,6 +8,13 @@ separate works owned and licensed by their respective authors. They are not
 included in the source archive or relicensed under MIT. Users and distributors
 are responsible for checking the applicable license and download integrity.
 
+Exception: the programs and scripts in `bundled_tools/` (Eventvwr Parser, jd-gui,
+DiskPart+, LogFileParser, MFT-HardLink, MFTParser, ReplaceParser, PsicoChecker,
+Pca-Files, ShellSearch and CommonDirectories) are packaged inside the SSTool+
+executable and copied to the tools folder when the user selects them, after their
+SHA-256 is verified. They are also separate works owned and licensed by their
+respective authors and are not relicensed under MIT.
+
 The application uses these Python packages at runtime or build time:
 
 - CustomTkinter

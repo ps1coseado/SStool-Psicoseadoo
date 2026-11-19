@@ -93,6 +93,18 @@ TOOL_DESC_ES = {
     ".NET 9.0": "El runtime de escritorio .NET permite ejecutar aplicaciones de escritorio de Windows existentes.",
     "Microsoft Visual C++ v14": "Biblioteca runtime y herramientas de compilación para crear y ejecutar aplicaciones C++.",
     "Java": "Diseñado para ejecutar, desarrollar y administrar aplicaciones robustas orientadas a objetos en Windows.",
+
+    "Eventvwr Parser": "Herramienta para SS que lee los eventos de Windows y te los muestra todos juntos en un solo lugar, así no tenés que andar abriendo el visor de eventos y filtrando log por log como un enfermo.",
+    "PsicoChecker": "Servicios, registro, registros de eventos y básicamente un montón de cosas para ayudar a quien hace la screenshare.",
+    "jd-gui": "Descompilador de Java",
+    "DiskPart+": "DiskPart+ registra todo lo que les pasa a los discos de un equipo: discos y USB que entran y salen, discos virtuales (VHD/VHDX/ISO) que se montan y expulsan, letras que se asignan o se quitan, particiones creadas o borradas, discos formateados, y programas o archivos usados desde otros discos.",
+    "MFT-HardLink": "Detecta hardlinks usando el $MFT",
+    "MFTParser": "Parsea el $MFT a CSV (para TLE)",
+    "ReplaceParser": "Parsea los replaces",
+    "Pca-Files": "Analiza archivos de PCA",
+    "LogFileParser": "Analiza el $LogFile de NTFS (el registro de transacciones del sistema de archivos) y muestra qué archivos y carpetas se crearon, renombraron o borraron. También muestra los registros del $UsnJrnl que siguen guardados dentro del log.",
+    "ShellSearch": "Busca comandos sospechosos en PowerShell",
+    "CommonDirectories": "Escanea los directorios comunes",
 }
 
 

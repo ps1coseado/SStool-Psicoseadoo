@@ -7,9 +7,9 @@ from core.data import CATEGORIES
 class WebTests(unittest.TestCase):
     def test_video_intro_keeps_header_visible_and_has_exit_fallback(self):
         page = document()
-        self.assertIn('autoplay muted playsinline', page)
-        self.assertIn('data:video/mp4;base64,', page)
-        self.assertIn("addEventListener('ended',finishIntro", page)
+        self.assertIn('id="intro-canvas"', page)
+        self.assertIn('setTimeout(finishIntro,280)', page)
+        self.assertNotIn('FORENSIC TOOLKIT', page)
         self.assertIn('setTimeout(finishIntro,10000)', page)
         self.assertIn('.app.intro-waiting{opacity:1;pointer-events:auto}', page)
         self.assertNotIn('class="app intro-waiting" inert', page)
@@ -21,7 +21,8 @@ class WebTests(unittest.TestCase):
         names = [t['name'] for t in other['tools']]
         self.assertEqual(names[names.index('Siege') + 1:], ['Eventvwr', 'ConsoleHostHistory'])
         scripts = next(c for c in CATEGORIES if c['id'] == 'scripts')
-        for t in scripts['tools'][-3:]:
+        by_name = {t['name']: t for t in scripts['tools']}
+        for t in (by_name['Class Loader Dump'], by_name['Signatures'], by_name['BAM Parser Script']):
             self.assertTrue(t['run_as_admin'])
             self.assertTrue(t['cmd_command'].startswith('powershell '))
             self.assertNotIn('https\\:', t['cmd_command'])
@@ -40,7 +41,8 @@ class WebTests(unittest.TestCase):
     def test_spokwn_additions_keep_existing_ids_and_admin_launch(self):
         category = next(c for c in CATEGORIES if c['label'] == 'Spokwn')
         tools = {t['name']: t for t in category['tools']}
-        self.assertEqual(len(tools), 9)
+        self.assertEqual(len(tools), 10)
+        self.assertEqual(tools['ReplaceParser']['id'], 'redlotus:new0')
         self.assertEqual(tools['JournalTrace']['id'], 'redlotus:0')
         self.assertEqual(tools['KernelDumpTool']['id'], 'redlotus:1')
         for name in ('BAMParser', 'PrefetchParser', 'BAMDeletedKeys', 'ActivitiesCache', 'PathsParser', 'ProcessParser', 'PcaSvcExecuted'):
@@ -65,7 +67,7 @@ class WebTests(unittest.TestCase):
     def test_relocated_cards_keep_their_original_actions(self):
         bridge = Bridge()
         cards = [t for c in catalogue() for t in c['tools']]
-        self.assertEqual(len({t['id'] for t in cards}), 123)
+        self.assertEqual(len({t['id'] for t in cards}), 117)
         for card in cards:
             self.assertEqual(bridge._tools[card['id']][1]['name'], card['name'])
         other = next(c for c in catalogue() if c['id'] == 'nirsoft')
@@ -100,7 +102,8 @@ class WebTests(unittest.TestCase):
     def test_social_buttons_open_requested_profiles(self):
         page = document()
         self.assertNotIn('id="language"', page)
-        self.assertIn('id="github"', page)
+        self.assertIn('id="author"', page)
+        self.assertNotIn('id="github"', page)
         bridge = Bridge()
         with patch('ui.web_app.webbrowser.open_new_tab', return_value=True) as open_tab:
             bridge.open_link('github')
@@ -117,12 +120,12 @@ class WebTests(unittest.TestCase):
     def test_toolbar_is_above_categories(self):
         html = document()
         self.assertLess(html.index('<header class="titlebar pywebview-drag-region"'), html.index('<nav class="nav"'))
-        self.assertEqual(html.count('id="search"'), 0)
+        self.assertEqual(html.count('id="search"'), 1)
 
     def test_original_intro_is_embedded(self):
         html = document()
         self.assertIn('id="intro-frame"', html)
-        self.assertIn('data:video/mp4;base64,', html)
+        self.assertIn('intro-canvas', html)
         self.assertNotIn('__INTRO_IMAGE__', html)
         self.assertIn('class="app intro-waiting"', html)
 
@@ -133,8 +136,8 @@ class WebTests(unittest.TestCase):
 
     def test_complete_catalogue(self):
         items = catalogue()
-        self.assertEqual(sum(len(c['tools']) for c in items), 123)
-        self.assertEqual(len(items), 9)
+        self.assertEqual(sum(len(c['tools']) for c in items), 117)
+        self.assertEqual(len(items), 8)
         for old, new in zip(CATEGORIES, items):
             self.assertEqual([t['name'] for t in old['tools']], [t['name'] for t in new['tools']])
             self.assertEqual([t['desc'] for t in old['tools']], [t['descriptions']['en'] for t in new['tools']])
@@ -145,21 +148,17 @@ class WebTests(unittest.TestCase):
         self.assertFalse(bridge.launch({'command':'bad'})['accepted'])
         self.assertFalse(bridge.open_link('https://example.com'))
 
-    def test_detect_downloads_are_unique_and_elevated(self):
-        category = next(c for c in CATEGORIES if c['id'] == 'detect_ac')
-        self.assertEqual(category['label'], 'Detect.ac')
+    def test_detect_ac_category_and_tools_removed(self):
         ids = [c['id'] for c in CATEGORIES]
+        self.assertNotIn('detect_ac', ids)
         self.assertEqual(ids.index('redlotus') + 1, ids.index('nirsoft_utilities'))
         self.assertEqual(ids.index('nirsoft_utilities') + 1, ids.index('ericzimmerman'))
-        self.assertEqual(ids.index('ericzimmerman') + 1, ids.index('detect_ac'))
-        self.assertEqual(len(category['tools']), 17)
-        self.assertEqual(len({t['path'] for t in category['tools']}), 17)
+        self.assertEqual(ids.index('ericzimmerman') + 1, ids.index('scripts'))
         self.assertEqual(CATEGORIES[-1]['id'], 'dependencies')
-        for tool in category['tools']:
-            self.assertTrue(tool['run_as_admin'])
-            self.assertTrue(tool['url'].startswith('https://github.com/detect-ac/'))
-            self.assertIn('/releases/download/', tool['url'])
-            self.assertTrue(tool['path'].endswith('.exe'))
+        for tool in (t for c in CATEGORIES for t in c['tools']):
+            self.assertNotEqual(tool.get('storage_category'), 'detect_ac')
+            self.assertNotIn('detect.ac', tool.get('url') or '')
+            self.assertNotIn('detect.ac', tool.get('desc') or '')
 
     def test_cooldown_enforced_in_host(self):
         bridge = Bridge()
@@ -178,10 +177,22 @@ class WebTests(unittest.TestCase):
         bridge.window_control('fullscreen')
         bridge._window.toggle_fullscreen.assert_called_once()
 
-    def test_document_keeps_embedded_wallpaper_and_blur(self):
+    def test_no_animations_optimized_setting_is_wired(self):
+        page = document()
+        self.assertIn("setAnim:'No Animations (Optimized Version)'", page)
+        self.assertIn("setAnim:'Sin animaciones (versión optimizada)'", page)
+        self.assertIn('noAnimations:false', page)
+        self.assertIn("classList.add('no-animations','low-effects')", page)
+        self.assertIn("classList.toggle('no-animations',settings.noAnimations)", page)
+        self.assertIn("classList.toggle('low-effects',lowEffects)", page)
+        self.assertIn("row(t('setAnim'),t('setAnimDesc'),swAnim)", page)
+        self.assertIn('if(settings.noAnimations)finishIntro()', page)
+        self.assertIn('if(!settings.noAnimations)(()=>{', page)
+
+    def test_document_uses_static_dark_background_and_no_blur(self):
         html = document()
-        self.assertIn('class="wallpaper"', html)
-        self.assertIn('data:image/', html)
+        self.assertNotIn('class="wallpaper"', html)
+        self.assertIn('background:#0b0b0c', html)
         self.assertIn('<title>SSTool+</title>', html)
         self.assertIn('backdrop-filter:none!important', html)
         self.assertIn('Meow Imports Checker', html)
@@ -193,3 +204,37 @@ class WebTests(unittest.TestCase):
         with patch('ui.web_app.launch_tool', return_value=True) as launch:
             bridge._run('orbdiff:0')
         self.assertIs(launch.call_args.args[1], CATEGORIES[0]['tools'][0])
+
+
+class ToolInfoTests(unittest.TestCase):
+    def test_info_links_and_english_status(self):
+        from core.tool_info import compare_versions, to_english, tool_info
+        info = tool_info({'name': 'X', 'url': 'https://github.com/Orbdiff/BAMReveal/releases/download/v1.3.1/BAMReveal.exe'})
+        self.assertEqual(info['page'], 'https://github.com/Orbdiff/BAMReveal')
+        self.assertEqual(info['version'], 'v1.3.1')
+        self.assertTrue(compare_versions('1.0.0', 'v1.0.1'))
+        self.assertFalse(compare_versions('1.0.0', '1.0.0'))
+        self.assertEqual(to_english('Foo se abrio correctamente.'), 'Foo opened successfully.')
+
+    def test_tool_action_rejects_unknown_and_returns_link(self):
+        bridge = Bridge()
+        self.assertFalse(bridge.tool_action('nope', 'link')['ok'])
+        tool_id = next(i for i, (_, t) in bridge._tools.items() if t.get('url'))
+        self.assertTrue(bridge.tool_action(tool_id, 'link')['text'].startswith('http'))
+
+
+class WorkspaceTests(unittest.TestCase):
+    def test_tools_folder_created_documented_and_cleaned(self):
+        import os, tempfile
+        from core import launcher, workspace
+        with tempfile.TemporaryDirectory() as home, patch.dict('os.environ', {'LOCALAPPDATA': home + '/la', 'USERPROFILE': home + '/up'}):
+            os.makedirs(home + '/la'); os.makedirs(home + '/up/Downloads')
+            root = workspace.prepare_tools_root()
+            self.assertEqual(os.path.basename(root), 'Tools')
+            cat, tool = CATEGORIES[0], CATEGORIES[0]['tools'][0]
+            path = launcher.resolve_tool_path(cat['id'], tool)
+            os.makedirs(os.path.dirname(path)); open(path, 'wb').write(b'MZ')
+            workspace.record_source(cat['id'], tool)
+            self.assertIn('Orbdiff/PrefetchView', open(os.path.join(os.path.dirname(path), 'ORIGEN.txt'), encoding='utf-8').read())
+            workspace.cleanup_on_exit()
+            self.assertFalse(os.path.exists(root))
